@@ -14,6 +14,7 @@ source .venv/bin/activate   # or: source venv/bin/activate
 main checkout).
 
 ## Project Structure
+
 File counts shift constantly — don't treat the tree below as exhaustive.
 The canonical source is the filesystem. The notes call out the load-bearing
 entry points you'll actually edit.
