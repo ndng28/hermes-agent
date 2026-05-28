@@ -21,119 +21,50 @@ entry points you'll actually edit.
 
 ```
 hermes-agent/
-├── run_agent.py  # AIAgent class — core conversation loop (~4k LOC)
-├── model_tools.py  # Tool orchestration, discover_builtin_tools(), handle_function_call() (~923 LOC)
-├── toolsets.py  # Toolset definitions, _HERMES_CORE_TOOLS list (~882 LOC)
-├── cli.py  # HermesCLI class — interactive CLI orchestrator (~15k LOC)
-├── hermes_state.py  # SessionDB — SQLite session store (FTS5 search) (~3k LOC)
-├── hermes_constants.py  # get_hermes_home(), display_hermes_home() — profile-aware paths (~463 LOC)
-├── hermes_logging.py  # setup_logging() — agent.log / errors.log / gateway.log (profile-aware) (~389 LOC)
-├── batch_runner.py  # Parallel batch processing (~1k LOC)
-├── acp_adapter/  # ACP server (VS Code / Zed / JetBrains integration)
-├── acp_registry/  # ACP registry for tool registration
-├── agent/  # Agent internals (provider adapters, memory, caching, compression, etc.)
-│   ├── lsp/
-│   ├── secret_sources/
-│   └── transports/
-├── cron/  # Scheduler — jobs.py, scheduler.py
-├── docs/  # Documentation and plans
-│   ├── plans/
-│   └── releases/
-├── gateway/  # Messaging gateway — run.py + session.py + platforms/
-│   ├── platforms/  # Adapter per platform (telegram, discord, slack, …)
-│   └── builtin_hooks/  # Extension point for always-registered gateway hooks
-├── hermes_cli/  # CLI subcommands, setup wizard, plugins loader, skin engine
-├── optional-skills/  # Heavier/niche skills shipped but NOT active by default
-├── plugins/  # Plugin system (see "Plugins" section below)
-│   ├── memory/  # Memory-provider plugins
-│   ├── context_engine/  # Context-engine plugins
-│   ├── model-providers/  # Inference backend plugins
-│   ├── kanban/  # Multi-agent board dispatcher + worker plugin
-│   ├── web/
-│   ├── browser/
-│   ├── image_gen/  # Image-generation providers
-│   ├── video_gen/
-│   ├── spotify/
-│   ├── platforms/
-│   ├── security-guidance/
+├── run_agent.py          # AIAgent class — core conversation loop (~4k LOC)
+├── model_tools.py        # Tool orchestration, discover_builtin_tools(), handle_function_call()
+├── toolsets.py           # Toolset definitions, _HERMES_CORE_TOOLS list
+├── cli.py                # HermesCLI class — interactive CLI orchestrator (~15k LOC)
+├── hermes_state.py       # SessionDB — SQLite session store (FTS5 search)
+├── hermes_constants.py   # get_hermes_home(), display_hermes_home() — profile-aware paths
+├── hermes_logging.py     # setup_logging() — agent.log / errors.log / gateway.log (profile-aware)
+├── batch_runner.py       # Parallel batch processing
+├── agent/                # Agent internals (provider adapters, memory, caching, compression, etc.)
+├── hermes_cli/           # CLI subcommands, setup wizard, plugins loader, skin engine
+├── tools/                # Tool implementations — auto-discovered via tools/registry.py
+│   └── environments/     # Terminal backends (local, docker, ssh, modal, daytona, singularity)
+├── gateway/              # Messaging gateway — run.py + session.py + platforms/
+│   ├── platforms/        # Adapter per platform (telegram, discord, slack, whatsapp,
+│   │                     #   homeassistant, signal, matrix, mattermost, email, sms,
+│   │                     #   dingtalk, wecom, weixin, feishu, qqbot, bluebubbles,
+│   │                     #   yuanbao, webhook, api_server, ...). See ADDING_A_PLATFORM.md.
+│   └── builtin_hooks/    # Extension point for always-registered gateway hooks (none shipped)
+├── plugins/              # Plugin system (see "Plugins" section below)
+│   ├── memory/           # Memory-provider plugins (honcho, mem0, supermemory, ...)
+│   ├── context_engine/   # Context-engine plugins
+│   ├── model-providers/  # Inference backend plugins (openrouter, anthropic, gmi, ...)
+│   ├── kanban/           # Multi-agent board dispatcher + worker plugin
 │   ├── hermes-achievements/  # Gamified achievement tracking
-│   ├── observability/  # Metrics / traces / logs plugin
-│   ├── teams_pipeline/
-│   ├── google_meet/
-│   ├── disk-cleanup/
-│   └── example-dashboard/
-├── providers/  # Provider adapters (separate from plugins/model-providers)
-├── scripts/  # run_tests.sh, release.py, auxiliary scripts
-│   ├── lib/
-│   ├── tests/
-│   └── whatsapp-bridge/
-├── skills/  # Built-in skills bundled with the repo
-│   ├── autonomous-ai-agents/
-│   ├── creative/
-│   ├── devops/
-│   ├── software-development/
-│   ├── dogfood/
-│   ├── github/
-│   ├── research/
-│   ├── data-science/
-│   ├── media/
-│   ├── mlops/
-│   ├── note-taking/
-│   ├── productivity/
-│   ├── social-media/
-│   ├── email/
-│   ├── gaming/
-│   ├── mcp/
-│   ├── smart-home/
-│   ├── red-teaming/
-│   ├── domain/
-│   ├── inference-sh/
-│   ├── gifs/
-│   ├── index-cache/
-│   ├── apple/
-│   ├── diagramming/
-│   ├── yuanbao/
-├── tests/  # Pytest suite (~17k tests across ~900 files as of May 2026)
-│   ├── agent/
-│   ├── tools/
-│   ├── gateway/
-│   ├── hermes_cli/
-│   ├── cli/
-│   ├── cron/
-│   ├── plugins/
-│   ├── integration/
-│   ├── e2e/
-│   ├── fakes/
-│   ├── scripts/
-│   ├── skills/
-│   ├── stress/
-│   ├── providers/
-│   ├── run_agent/
-│   ├── website/
-│   ├── honcho_plugin/
-│   ├── openviking_plugin/
-│   ├── tui_gateway/
-│   ├── acp/
-│   ├── acp_adapter/
-│   ├── hermes_state/
-│   └── docker/
-├── tools/  # Tool implementations — auto-discovered via tools/registry.py
-│   ├── environments/  # Terminal backends (local, docker, ssh, modal, …)
-│   ├── computer_use/
-│   └── neutts_samples/
-├── tui_gateway/  # Python JSON-RPC backend for the TUI
-├── ui-tui/  # Ink (React) terminal UI — `hermes --tui`
-│   ├── src/  # entry.tsx, app.tsx, + app/components/hooks/lib
-│   ├── packages/
-│   └── scripts/
-├── venv/
-└── website/  # Docusaurus docs site
-    ├── docs/
-    ├── i18n/
-    ├── scripts/
-    ├── src/
-    └── static/
+│   ├── observability/    # Metrics / traces / logs plugin
+│   ├── image_gen/        # Image-generation providers
+│   └── <others>/         # disk-cleanup, example-dashboard, google_meet, platforms,
+│                         #   spotify, strike-freedom-cockpit, ...
+├── optional-skills/      # Heavier/niche skills shipped but NOT active by default
+├── skills/               # Built-in skills bundled with the repo
+├── ui-tui/               # Ink (React) terminal UI — `hermes --tui`
+│   └── src/              # entry.tsx, app.tsx, gatewayClient.ts + app/components/hooks/lib
+├── tui_gateway/          # Python JSON-RPC backend for the TUI
+├── acp_adapter/          # ACP server (VS Code / Zed / JetBrains integration)
+├── cron/                 # Scheduler — jobs.py, scheduler.py
+├── scripts/              # run_tests.sh, release.py, auxiliary scripts
+├── website/              # Docusaurus docs site
+└── tests/                # Pytest suite (~5k individual tests across ~1262 files as of May 2026)
 ```
+
+**User config:** `~/.hermes/config.yaml` (settings), `~/.hermes/.env` (API keys only).
+**Logs:** `~/.hermes/logs/` — `agent.log` (INFO+), `errors.log` (WARNING+),
+`gateway.log` when running the gateway. Profile-aware via `get_hermes_home()`.
+Browse with `hermes logs [--follow] [--level ...] [--session ...]`.
 
 ## File Dependency Chain
 
