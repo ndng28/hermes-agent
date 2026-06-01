@@ -15,9 +15,11 @@ Config keys this provider responds to::
       search_backend: "searxng"     # explicit per-capability
       backend: "searxng"            # shared fallback
 
-Env var::
+Env vars::
 
     SEARXNG_URL=http://localhost:8080
+    SEARXNG_LANGUAGE=en             # optional default language
+    SEARXNG_CATEGORIES=general,it   # optional comma-separated categories
 """
 
 from __future__ import annotations
@@ -65,6 +67,14 @@ class SearXNGWebSearchProvider(WebSearchProvider):
             "format": "json",
             "pageno": 1,
         }
+
+        # Optional env-driven parameters for self-hosted instance tuning
+        language = os.getenv("SEARXNG_LANGUAGE", "").strip()
+        if language:
+            params["language"] = language
+        categories = os.getenv("SEARXNG_CATEGORIES", "").strip()
+        if categories:
+            params["categories"] = categories
 
         try:
             resp = httpx.get(
@@ -123,7 +133,32 @@ class SearXNGWebSearchProvider(WebSearchProvider):
             limit,
         )
 
-        return {"success": True, "data": {"web": web_results}}
+        # Collect supplementary metadata that isn't part of the normalized
+        # web schema but helps the agent judge result quality
+        extras: Dict[str, Any] = {}
+        suggestions = data.get("suggestions", [])
+        if suggestions:
+            extras["suggestions"] = suggestions[:10]
+        answers = data.get("answers", [])
+        if answers:
+            extras["answers"] = answers
+        infoboxes = data.get("infoboxes", [])
+        if infoboxes:
+            extras["infoboxes"] = [
+                {"title": ib.get("title", ""), "content": str(ib.get("content", ""))[:500]}
+                for ib in infoboxes
+                if ib.get("content")
+            ]
+        unresponsive = data.get("unresponsive_engines", [])
+        if unresponsive:
+            extras["unresponsive_engines"] = [
+                e[0] if isinstance(e, list) else str(e) for e in unresponsive
+            ]
+
+        result: Dict[str, Any] = {"success": True, "data": {"web": web_results}}
+        if extras:
+            result["data"]["extras"] = extras
+        return result
 
     def get_setup_schema(self) -> Dict[str, Any]:
         return {
