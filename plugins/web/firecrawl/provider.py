@@ -482,15 +482,30 @@ class FirecrawlWebSearchProvider(WebSearchProvider):
 
             try:
                 logger.info("Firecrawl scraping: %s", url)
+                firecrawl_client = _get_firecrawl_client()
                 try:
-                    scrape_result = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            _get_firecrawl_client().scrape,
-                            url=url,
-                            formats=formats,
-                        ),
-                        timeout=60,
-                    )
+                    # Self-hosted Firecrawl (including CRW/fastcrw) only
+                    # serves /v1/scrape — use the v1 API when FIRECRAWL_API_URL
+                    # is set so the connection doesn't fail on a v2 endpoint
+                    # that doesn't exist.
+                    api_url = os.environ.get("FIRECRAWL_API_URL", "").strip()
+                    if api_url:
+                        scrape_result = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                firecrawl_client.v1.scrape_url,
+                                url=url,
+                            ),
+                            timeout=60,
+                        )
+                    else:
+                        scrape_result = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                firecrawl_client.scrape,
+                                url=url,
+                                formats=formats,
+                            ),
+                            timeout=60,
+                        )
                 except asyncio.TimeoutError:
                     logger.warning("Firecrawl scrape timed out for %s", url)
                     results.append(
