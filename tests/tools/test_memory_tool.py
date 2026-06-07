@@ -173,7 +173,7 @@ class TestScanMemoryContent:
     # ── Hardcoded secrets ──
 
     def test_hardcoded_secret_blocked(self):
-        result = _scan_memory_content('api_key="sk-abcdef1234567890abcdef12"')
+        result = _scan_memory_content('api_key="sk-abc...ef12"')
         assert "Blocked" in result
         assert "hardcoded_secret" in result
 
@@ -636,3 +636,96 @@ class TestLoadTimeSnapshotSanitization:
         # Block marker appears exactly once, not nested
         assert snapshot.count("[BLOCKED:") == 1
         assert "Clean fact" in snapshot
+
+
+# =========================================================================
+# Auto-prune on near-overflow replace
+#
+# When a replace action would push the store past its char limit, and
+# utilization is above 90%, the tool auto-removes the lowest-priority
+# entry (shortest × oldest) and retries the replacement.
+# =========================================================================
+
+
+class TestMemoryStoreAutoPrune:
+    def _populate_near_overflow(self, store, target="memory"):
+        """Fill entries to ~92% utilization for the given target.
+
+        Store limit is 500 chars (memory).  Three entries of ~150 chars
+        plus one short entry of 5 chars, joined by 3 delimiters (each
+        3 chars: ``\\n§\\n``), totals ~464 chars = ~93%.
+        """
+        store.add(target, "A" * 150)
+        store.add(target, "B" * 150)
+        store.add(target, "C" * 150)
+        store.add(target, "short")
+        # Verify we're near the limit
+        current = store._char_count(target)
+        assert 455 <= current <= 475, f"Expected ~464, got {current}"
+
+    def test_replace_triggers_auto_prune_at_92_percent(self, store):
+        """At ~92% utilization, a replacement that would overflow should
+        auto-prune the lowest-priority entry and succeed."""
+        self._populate_near_overflow(store)
+
+        # Replace the first "AAA..." entry with something longer that would
+        # overflow without pruning.  The short entry should get pruned.
+        # After pruning 5-char "short": total = X + 150 + 150 + 2*3 delimiters = X + 306.
+        # X = 194 gives 500, which is ≤ 500 (passes the > limit check).
+        result = store.replace("memory", "A" * 150, "X" * 194)
+        assert result["success"] is True
+        assert "X" * 194 in str(result["entries"])
+        # "short" should have been pruned (lowest score: short × max_age)
+        assert "short" not in result["entries"]
+
+    def test_auto_prune_drops_shortest_oldest_entry(self, store):
+        """Verify the auto-prune heuristic drops a short entry without a
+        date prefix before a longer one with a recent date."""
+        # Add entries with explicit "Added YYYY-MM-DD" prefixes
+        store.add("memory", "Added 2026-06-06: Latest fact — still relevant.")
+        store.add("memory", "Added 2026-01-01: Old but important and lengthy.")
+        store.add("memory", "tiny")
+
+        # Replace "tiny" with a longer version that would overflow
+        result = store.replace(
+            "memory",
+            "tiny",
+            "tiny was a short entry that got replaced by something slightly longer",
+        )
+
+        assert result["success"] is True
+        # "tiny" matched and got replaced
+        assert any("tiny was a short entry" in e for e in result["entries"])
+        # The early-2026 entry should still be there (long, so higher score)
+        assert any("Added 2026-01-01" in e for e in result["entries"])
+
+    def test_auto_prune_at_99_percent_still_overflows(self, store):
+        """At ~99% utilization, even after pruning one entry the replacement
+        may still overflow. The tool must return the original-style error
+        rather than looping infinitely."""
+        # Limit is 500.  Two entries: 460 + 30 + delimiter (3) = 493 ≈ 99%.
+        store.add("memory", "x" * 460)
+        store.add("memory", "y" * 30)
+
+        current = store._char_count("memory")
+        assert current > 490, f"Expected ~99%, got {current}/500"
+
+        # Replace "x"*460 with an entry longer than the limit itself (501).
+        # Even after pruning the short "y"*30 entry, the replacement is
+        # still longer than 500 — overflow persists.
+        result = store.replace("memory", "x" * 460, "z" * 501)
+
+        assert result["success"] is False
+        assert "even after pruning" in result["error"].lower()
+
+    def test_single_entry_no_prune(self, store):
+        """When there is only one entry, auto-prune cannot drop it and must
+        return the standard overflow error."""
+        store.add("memory", "x" * 480)
+
+        # Replace with something that exceeds the 500-char limit.
+        # There's only one entry, so _prune_lowest_priority returns 0.
+        result = store.replace("memory", "x" * 480, "y" * 501)
+        assert result["success"] is False
+        # Should be the standard overflow message, not the "even after pruning" variant
+        assert "Shorten the new content" in result["error"]

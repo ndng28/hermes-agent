@@ -294,6 +294,56 @@ class MemoryStore:
             return self.user_char_limit
         return self.memory_char_limit
 
+    def _prune_lowest_priority(self, target: str) -> int:
+        """Remove the lowest-priority entry to free space.
+
+        Heuristic: score = len(entry) / (age_days + 1), where age is parsed
+        from a leading ``Added YYYY-MM-DD`` prefix if present.  Entries
+        without a date prefix are treated as oldest (max age).  The entry
+        with the *lowest* score is removed — short + old entries carry the
+        least information density and are dropped first.
+
+        Returns the number of bytes freed (entry length + one delimiter).
+        Returns 0 when there is only one entry (can't prune the last one).
+        """
+        import datetime
+        import re
+
+        entries = self._entries_for(target)
+        if len(entries) <= 1:
+            return 0
+
+        date_pat = re.compile(r"^Added (\d{4}-\d{2}-\d{2})")
+        now = datetime.date.today()
+        MAX_AGE = 9999
+
+        scored: list[tuple[float, int]] = []
+        for i, entry in enumerate(entries):
+            m = date_pat.match(entry.strip())
+            if m:
+                try:
+                    added = datetime.date.fromisoformat(m.group(1))
+                    age = (now - added).days
+                except ValueError:
+                    age = MAX_AGE
+            else:
+                age = MAX_AGE
+
+            # Lower score = lower priority = pruned first.
+            # Short + old entries score lowest; long + recent entries score highest.
+            score = len(entry) / (age + 1)
+            scored.append((score, i))
+
+        # Lowest score = lowest priority
+        scored.sort()
+        _, idx = scored[0]
+
+        freed = len(entries[idx]) + len(ENTRY_DELIMITER)
+        entries.pop(idx)
+        self._set_entries(target, entries)
+        self.save_to_disk(target)
+        return freed
+
     def add(self, target: str, content: str) -> Dict[str, Any]:
         """Append a new entry. Returns error if it would exceed the char limit."""
         content = content.strip()
@@ -390,13 +440,53 @@ class MemoryStore:
             new_total = len(ENTRY_DELIMITER.join(test_entries))
 
             if new_total > limit:
-                return {
-                    "success": False,
-                    "error": (
-                        f"Replacement would put memory at {new_total:,}/{limit:,} chars. "
-                        f"Shorten the new content or remove other entries first."
-                    ),
-                }
+                # Auto-prune the lowest-priority entry when the replacement
+                # would overflow the store.  This frees space by dropping a
+                # single low-value entry and retrying the size check.
+                freed = self._prune_lowest_priority(target)
+                if freed == 0:
+                    # Only one entry left and it's being replaced — can't
+                    # drop it.  Return the original overflow error.
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Replacement would put memory at {new_total:,}/{limit:,} chars. "
+                            f"Shorten the new content or remove other entries first."
+                        ),
+                    }
+
+                # Re-read entries after pruning and re-find the match index,
+                # because pruning may have shifted positions.
+                entries = self._entries_for(target)
+                re_matches = [(i, e) for i, e in enumerate(entries) if old_text in e]
+                if not re_matches:
+                    # The pruned entry was the matched one — the replacement
+                    # implicitly happened.  The store now holds everything
+                    # except the old+low-priority entry — no further work.
+                    return self._success_response(
+                        target,
+                        "Entry replaced (matched entry was pruned during auto-prune).",
+                    )
+
+                idx = re_matches[0][0]
+                test_entries = entries.copy()
+                test_entries[idx] = new_content
+                new_total = len(ENTRY_DELIMITER.join(test_entries))
+
+                if new_total > limit:
+                    # Even after pruning one entry, still over the limit.
+                    # Return the original error — the agent needs to write
+                    # shorter content or remove entries manually.
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Replacement would put memory at {new_total:,}/{limit:,} chars "
+                            f"even after pruning one low-priority entry. "
+                            f"Shorten the new content or remove more entries first."
+                        ),
+                    }
+
+                # Pruning freed enough space — fall through to apply the replacement.
 
             entries[idx] = new_content
             self._set_entries(target, entries)
