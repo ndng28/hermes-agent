@@ -6,6 +6,7 @@ adds latency to the user-facing reply.
 
 import logging
 import threading
+from datetime import datetime
 from typing import Callable, Optional
 
 from agent.auxiliary_client import call_llm
@@ -18,6 +19,12 @@ logger = logging.getLogger(__name__)
 # become visible instead of piling up as NULL session titles.
 FailureCallback = Callable[[str, BaseException], None]
 TitleCallback = Callable[[str], None]
+
+# Sentinel returned by generate_title() when every provider in the
+# fallback chain fails.  auto_title_session() uses this signal to build
+# a deterministic fallback name from the session's creation timestamp
+# instead of silently leaving the session untitled.
+FALLBACK_TITLE_SENTINEL = "__FALLBACK__"
 
 _TITLE_PROMPT = (
     "Generate a short, descriptive title (3-7 words) for a conversation that starts with the "
@@ -81,6 +88,27 @@ def generate_title(
                 failure_callback("title generation", e)
             except Exception:
                 logger.debug("Title generation failure_callback raised", exc_info=True)
+        return FALLBACK_TITLE_SENTINEL
+
+
+def _build_fallback_title(session_db, session_id: str) -> Optional[str]:
+    """Build a deterministic fallback name from session creation time.
+
+    Format: chat-YYYY-MM-DD-HHMM based on the session's ``started_at``
+    timestamp.  Returns None when the session cannot be found or lacks a
+    valid timestamp.
+    """
+    try:
+        session = session_db.get_session(session_id)
+        if not session:
+            return None
+        started_at = session.get("started_at")
+        if started_at is None:
+            return None
+        dt = datetime.utcfromtimestamp(float(started_at))
+        return dt.strftime("chat-%Y-%m-%d-%H%M")
+    except Exception:
+        logger.debug("Failed to build fallback title for %s", session_id, exc_info=True)
         return None
 
 
@@ -118,6 +146,16 @@ def auto_title_session(
     if not title:
         return
 
+    # Fallback: every provider exhausted — build a deterministic name
+    if title == FALLBACK_TITLE_SENTINEL:
+        fallback_name = _build_fallback_title(session_db, session_id)
+        if fallback_name:
+            title = fallback_name
+            logger.info("Auto-generated fallback session title: %s", title)
+        else:
+            # Cannot determine timestamp; give up gracefully
+            return
+
     try:
         session_db.set_session_title(session_id, title)
         logger.debug("Auto-generated session title: %s", title)
@@ -143,7 +181,7 @@ def maybe_auto_title(
     """Fire-and-forget title generation after the first exchange.
 
     Only generates a title when:
-    - This appears to be the first user→assistant exchange
+    - This appears to be the first user->assistant exchange
     - No title is already set
     """
     if not session_db or not session_id or not user_message or not assistant_response:
