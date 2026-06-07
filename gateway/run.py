@@ -6572,6 +6572,26 @@ class GatewayRunner:
                     _phase_elapsed(),
                 )
 
+            # Stop the Telegram polling early so its server-side getUpdates
+            # session expires before the new gateway process starts polling.
+            # Without this, the new process immediately gets a 409 Conflict
+            # because Telegram's server still holds the old long-poll open.
+            # The regular adapter disconnect loop below also calls stop(),
+            # but for detached restarts that happens after the new process
+            # has already started — we must stop BEFORE the launch.
+            _tg_adapter = self.adapters.get(Platform.TELEGRAM, None)
+            if _tg_adapter:
+                try:
+                    if _tg_adapter._app and _tg_adapter._app.updater and _tg_adapter._app.updater.running:
+                        await _tg_adapter._app.updater.stop()
+                        logger.info(
+                            "Shutdown phase: Telegram polling stopped early at +%.2fs "
+                            "to prevent 409 Conflict on restart",
+                            _phase_elapsed(),
+                        )
+                except Exception as _e:
+                    logger.debug("Early Telegram updater stop error: %s", _e)
+
             if self._restart_requested and self._restart_detached:
                 try:
                     await self._launch_detached_restart_command()
